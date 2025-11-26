@@ -1,5 +1,9 @@
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
+import dotenv from 'dotenv';
+
+// Charger le .env AVANT de lire les variables
+dotenv.config();
 
 // Stockage en mémoire des tokens (pour production, utiliser Redis ou une DB)
 const authorizationCodes = new Map<string, { clientId: string; expiresAt: number }>();
@@ -104,7 +108,18 @@ export function verifyAccessToken(token: string): { valid: boolean; clientId?: s
  * Vérifie les credentials du client OAuth
  */
 export function verifyClientCredentials(clientId: string, clientSecret: string): boolean {
-    return clientId === OAUTH_CLIENT_ID && clientSecret === OAUTH_CLIENT_SECRET;
+    console.log('Verifying credentials:');
+    console.log('  Expected client_id:', OAUTH_CLIENT_ID);
+    console.log('  Received client_id:', clientId);
+    console.log('  Match:', clientId === OAUTH_CLIENT_ID);
+    console.log('  Expected secret:', OAUTH_CLIENT_SECRET);
+    console.log('  Received secret:', clientSecret);
+    console.log('  Match:', clientSecret === OAUTH_CLIENT_SECRET);
+    
+    const isValid = clientId === OAUTH_CLIENT_ID && clientSecret === OAUTH_CLIENT_SECRET;
+    console.log('  Overall valid:', isValid);
+    
+    return isValid;
 }
 
 /**
