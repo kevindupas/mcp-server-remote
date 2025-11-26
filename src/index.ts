@@ -156,8 +156,8 @@ const tools = [
 // ROUTES OAUTH 2.0
 // ============================================
 
-// GET /oauth/authorize - Page d'autorisation
-app.get('/oauth/authorize', (req: any, res) => {
+// GET /authorize - Page d'autorisation (Claude utilise /authorize, pas /oauth/authorize)
+app.get('/authorize', (req: any, res) => {
     const { client_id, redirect_uri, response_type, state } = req.query;
 
     if (!client_id || !redirect_uri || response_type !== 'code') {
@@ -212,7 +212,7 @@ app.get('/oauth/authorize', (req: any, res) => {
                 <li>Lire les scores opérateurs</li>
                 <li>Lire les statistiques de couverture</li>
             </ul>
-            <form method="POST" action="/oauth/authorize">
+            <form method="POST" action="/authorize">
                 <input type="hidden" name="client_id" value="${client_id}">
                 <input type="hidden" name="redirect_uri" value="${redirect_uri}">
                 <input type="hidden" name="state" value="${state || ''}">
@@ -224,8 +224,8 @@ app.get('/oauth/authorize', (req: any, res) => {
     `);
 });
 
-// POST /oauth/authorize - Traiter l'autorisation
-app.post('/oauth/authorize', (req, res) => {
+// POST /authorize - Traiter l'autorisation
+app.post('/authorize', (req, res) => {
     const { client_id, redirect_uri, state, action } = req.body;
 
     if (action !== 'allow') {
@@ -245,8 +245,8 @@ app.post('/oauth/authorize', (req, res) => {
     res.redirect(redirectUrl.toString());
 });
 
-// POST /oauth/token - Échanger le code contre un access token
-app.post('/oauth/token', (req, res) => {
+// POST /token - Échanger le code contre un access token
+app.post('/token', (req, res) => {
     const { grant_type, code, client_id, client_secret, redirect_uri } = req.body;
 
     if (grant_type !== 'authorization_code') {
@@ -303,8 +303,8 @@ app.get('/mcp', (req, res) => {
             tools: true,
         },
         oauth: {
-            authorization_endpoint: `${SERVER_URL}/oauth/authorize`,
-            token_endpoint: `${SERVER_URL}/oauth/token`,
+            authorization_endpoint: `${SERVER_URL}/authorize`,
+            token_endpoint: `${SERVER_URL}/token`,
         },
     });
 });
