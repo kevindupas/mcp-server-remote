@@ -1,11 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
-import { 
-    CallToolRequestSchema, 
-    ListToolsRequestSchema,
-    Tool 
-} from '@modelcontextprotocol/sdk/types.js';
-import express, { Request, Response } from 'express';
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
@@ -24,6 +20,7 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 const API_BASE_URL = process.env.DQOS_API_URL || 'http://localhost:8000/api/mcp';
 const SERVER_URL = process.env.SERVER_URL || `http://localhost:${PORT}`;
+const SESSION_SECRET = process.env.SESSION_SECRET || 'change-me-in-production';
 
 // Middleware
 app.use(helmet({
@@ -56,6 +53,135 @@ async function callDqosApi(endpoint: string, params: any = {}) {
     }
 }
 
+// Créer le serveur MCP
+const mcpServer = new Server(
+    {
+        name: 'DQoS MCP Remote Server',
+        version: '1.0.0',
+    },
+    {
+        capabilities: {
+            tools: {},
+        },
+    }
+);
+
+// Définir les outils MCP
+mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
+    return {
+        tools: [
+            {
+                name: 'get_locations',
+                description: 'Récupère les locations (provinces, districts, etc.) sans polygones géographiques',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        level: {
+                            type: 'number',
+                            description: 'Niveau hiérarchique: 0=Pays, 1=Province, 2=District',
+                        },
+                        search: {
+                            type: 'string',
+                            description: 'Recherche textuelle',
+                        },
+                        with_stats: {
+                            type: 'boolean',
+                            description: 'Inclure les statistiques',
+                        },
+                    },
+                },
+            },
+            {
+                name: 'get_kpi_data',
+                description: 'Récupère les données KPI de qualité de service',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        location_id: { type: 'number' },
+                        network: { type: 'string', enum: ['2g', '3g', '4g', '5g'] },
+                        latest_only: { type: 'boolean' },
+                    },
+                },
+            },
+            {
+                name: 'get_scoring',
+                description: 'Récupère les scores des opérateurs',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        network: { type: 'string', enum: ['2g', '3g', '4g', '5g'] },
+                        with_rankings: { type: 'boolean' },
+                    },
+                },
+            },
+            {
+                name: 'get_operators',
+                description: 'Liste les opérateurs télécoms',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        type: { type: 'string', enum: ['mobile', 'fixed', 'isp'] },
+                        with_stats: { type: 'boolean' },
+                    },
+                },
+            },
+            {
+                name: 'get_coverage',
+                description: 'Récupère les statistiques de couverture',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        location_id: { type: 'number' },
+                        network: { type: 'string', enum: ['2g', '3g', '4g', '5g'] },
+                    },
+                },
+            },
+            {
+                name: 'get_analytics',
+                description: 'Récupère des analyses globales',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        scope: { type: 'string', enum: ['global', 'operator', 'location', 'network'] },
+                        period: { type: 'string', enum: ['last_7_days', 'last_30_days', 'last_3_months'] },
+                    },
+                },
+            },
+        ],
+    };
+});
+
+// Handler pour appeler les outils
+mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+
+    console.log('Tool called:', { name, args });
+
+    try {
+        const endpoint = getEndpointForTool(name);
+        const result = await callDqosApi(endpoint, args || {});
+
+        return {
+            content: [
+                {
+                    type: 'text',
+                    text: JSON.stringify(result, null, 2),
+                },
+            ],
+        };
+    } catch (error: any) {
+        return {
+            content: [
+                {
+                    type: 'text',
+                    text: `Error: ${error.message}`,
+                },
+            ],
+            isError: true,
+        };
+    }
+});
+
 function getEndpointForTool(toolName: string): string {
     const mapping: Record<string, string> = {
         'get_locations': 'locations',
@@ -68,146 +194,12 @@ function getEndpointForTool(toolName: string): string {
     return mapping[toolName] || toolName;
 }
 
-// Définition des outils
-const tools: Tool[] = [
-    {
-        name: 'get_locations',
-        description: 'Récupère les locations (provinces, districts, etc.) sans polygones géographiques',
-        inputSchema: {
-            type: 'object',
-            properties: {
-                level: {
-                    type: 'number',
-                    description: 'Niveau hiérarchique: 0=Pays, 1=Province, 2=District',
-                },
-                search: {
-                    type: 'string',
-                    description: 'Recherche textuelle',
-                },
-                with_stats: {
-                    type: 'boolean',
-                    description: 'Inclure les statistiques',
-                },
-            },
-        },
-    },
-    {
-        name: 'get_kpi_data',
-        description: 'Récupère les données KPI de qualité de service',
-        inputSchema: {
-            type: 'object',
-            properties: {
-                location_id: { type: 'number' },
-                network: { type: 'string', enum: ['2g', '3g', '4g', '5g'] },
-                latest_only: { type: 'boolean' },
-            },
-        },
-    },
-    {
-        name: 'get_scoring',
-        description: 'Récupère les scores des opérateurs',
-        inputSchema: {
-            type: 'object',
-            properties: {
-                network: { type: 'string', enum: ['2g', '3g', '4g', '5g'] },
-                with_rankings: { type: 'boolean' },
-            },
-        },
-    },
-    {
-        name: 'get_operators',
-        description: 'Liste les opérateurs télécoms',
-        inputSchema: {
-            type: 'object',
-            properties: {
-                type: { type: 'string', enum: ['mobile', 'fixed', 'isp'] },
-                with_stats: { type: 'boolean' },
-            },
-        },
-    },
-    {
-        name: 'get_coverage',
-        description: 'Récupère les statistiques de couverture',
-        inputSchema: {
-            type: 'object',
-            properties: {
-                location_id: { type: 'number' },
-                network: { type: 'string', enum: ['2g', '3g', '4g', '5g'] },
-            },
-        },
-    },
-    {
-        name: 'get_analytics',
-        description: 'Récupère des analyses globales',
-        inputSchema: {
-            type: 'object',
-            properties: {
-                scope: { type: 'string', enum: ['global', 'operator', 'location', 'network'] },
-                period: { type: 'string', enum: ['last_7_days', 'last_30_days', 'last_3_months'] },
-            },
-        },
-    },
-];
-
-// Fonction pour créer un serveur MCP pour chaque connexion
-function createMCPServer() {
-    const server = new Server(
-        {
-            name: 'DQoS MCP Remote Server',
-            version: '1.0.0',
-        },
-        {
-            capabilities: {
-                tools: {},
-            },
-        }
-    );
-
-    // Handler pour lister les outils
-    server.setRequestHandler(ListToolsRequestSchema, async () => {
-        console.log('📋 Listing tools');
-        return { tools };
-    });
-
-    // Handler pour appeler les outils
-    server.setRequestHandler(CallToolRequestSchema, async (request) => {
-        const { name, arguments: args } = request.params;
-        console.log('🔧 Tool called:', { name, args });
-
-        try {
-            const endpoint = getEndpointForTool(name);
-            const result = await callDqosApi(endpoint, args || {});
-
-            return {
-                content: [
-                    {
-                        type: 'text',
-                        text: JSON.stringify(result, null, 2),
-                    },
-                ],
-            };
-        } catch (error: any) {
-            console.error('❌ Tool error:', error);
-            return {
-                content: [
-                    {
-                        type: 'text',
-                        text: `Error: ${error.message}`,
-                    },
-                ],
-                isError: true,
-            };
-        }
-    });
-
-    return server;
-}
-
 // ============================================
 // ROUTES OAUTH 2.0
 // ============================================
 
-app.get('/authorize', (req: Request, res: Response) => {
+// GET /authorize - Page d'autorisation
+app.get('/authorize', (req: any, res) => {
     const { client_id, redirect_uri, response_type, state } = req.query;
 
     if (!client_id || !redirect_uri || response_type !== 'code') {
@@ -273,18 +265,19 @@ app.get('/authorize', (req: Request, res: Response) => {
     `);
 });
 
-app.post('/authorize', (req: Request, res: Response) => {
+// POST /authorize - Traiter l'autorisation
+app.post('/authorize', (req, res) => {
     const { client_id, redirect_uri, state, action } = req.body;
 
-    console.log('🔐 Authorization request:', { client_id, redirect_uri, state, action });
+    console.log('Authorization request:', { client_id, redirect_uri, state, action });
 
     if (action !== 'allow') {
-        console.log('❌ Authorization denied');
+        console.log('Authorization denied by user');
         return res.redirect(`${redirect_uri}?error=access_denied&state=${state || ''}`);
     }
 
     const code = generateAuthorizationCode(client_id);
-    console.log('✅ Authorization code generated');
+    console.log('Authorization code generated:', { client_id, code: code.substring(0, 10) + '...' });
 
     const redirectUrl = new URL(redirect_uri);
     redirectUrl.searchParams.set('code', code);
@@ -292,10 +285,12 @@ app.post('/authorize', (req: Request, res: Response) => {
         redirectUrl.searchParams.set('state', state);
     }
 
+    console.log('Redirecting to:', redirectUrl.toString());
     res.redirect(redirectUrl.toString());
 });
 
-app.post('/token', (req: Request, res: Response) => {
+// POST /token - Échanger le code contre un access token
+app.post('/token', (req, res) => {
     let client_id = req.body.client_id;
     let client_secret = req.body.client_secret;
     
@@ -310,9 +305,9 @@ app.post('/token', (req: Request, res: Response) => {
         }
     }
     
-    const { grant_type, code } = req.body;
+    const { grant_type, code, redirect_uri } = req.body;
 
-    console.log('🎫 Token request:', { grant_type, client_id });
+    console.log('Token request:', { grant_type, code, client_id, has_secret: !!client_secret });
 
     if (grant_type !== 'authorization_code') {
         return res.status(400).json({
@@ -322,6 +317,7 @@ app.post('/token', (req: Request, res: Response) => {
     }
 
     if (!code || !client_id || !client_secret) {
+        console.error('Missing parameters:', { code: !!code, client_id: !!client_id, client_secret: !!client_secret });
         return res.status(400).json({
             error: 'invalid_request',
             error_description: 'Missing required parameters',
@@ -329,6 +325,7 @@ app.post('/token', (req: Request, res: Response) => {
     }
 
     if (!verifyClientCredentials(client_id, client_secret)) {
+        console.error('Invalid credentials');
         return res.status(401).json({
             error: 'invalid_client',
             error_description: 'Invalid client credentials',
@@ -336,6 +333,7 @@ app.post('/token', (req: Request, res: Response) => {
     }
 
     if (!verifyAuthorizationCode(code, client_id)) {
+        console.error('Invalid authorization code');
         return res.status(400).json({
             error: 'invalid_grant',
             error_description: 'Invalid or expired authorization code',
@@ -343,7 +341,7 @@ app.post('/token', (req: Request, res: Response) => {
     }
 
     const accessToken = generateAccessToken(client_id);
-    console.log('✅ Token generated successfully');
+    console.log('Token generated successfully for:', client_id);
 
     res.json({
         access_token: accessToken,
@@ -353,16 +351,14 @@ app.post('/token', (req: Request, res: Response) => {
 });
 
 // ============================================
-// ENDPOINT SSE MCP
+// ROUTES MCP avec SSE
 // ============================================
 
-app.get('/sse', async (req: Request, res: Response) => {
-    console.log('🔌 SSE connection attempt');
-    
+// POST /mcp/sse - Endpoint SSE pour MCP
+app.post('/mcp/sse', async (req, res) => {
     // Vérifier l'authentification
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        console.log('❌ No auth header');
         return res.status(401).json({ error: 'Unauthorized' });
     }
 
@@ -370,31 +366,20 @@ app.get('/sse', async (req: Request, res: Response) => {
     const verification = verifyAccessToken(token);
 
     if (!verification.valid) {
-        console.log('❌ Invalid token');
         return res.status(401).json({ error: 'Invalid token' });
     }
 
-    console.log('✅ SSE connection authenticated for:', verification.clientId);
-
-    // Créer un nouveau serveur MCP pour cette connexion
-    const mcpServer = createMCPServer();
+    console.log('SSE connection established for client:', verification.clientId);
 
     // Créer le transport SSE
-    const transport = new SSEServerTransport('/sse', res);
-    
-    // Connecter le serveur MCP au transport
+    const transport = new SSEServerTransport('/mcp/sse', res);
     await mcpServer.connect(transport);
-    
-    console.log('🚀 MCP Server connected via SSE');
 
-    // Gérer la fermeture de la connexion
-    req.on('close', () => {
-        console.log('🔌 SSE connection closed');
-    });
+    // Le SDK MCP gère automatiquement la communication
 });
 
 // Health check
-app.get('/health', (req: Request, res: Response) => {
+app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
@@ -402,10 +387,9 @@ app.get('/health', (req: Request, res: Response) => {
 });
 
 app.listen(PORT, () => {
-    console.log('🚀 DQoS MCP Remote Server (SSE) running on port', PORT);
-    console.log('📍 API Base URL:', API_BASE_URL);
-    console.log('🔐 OAuth enabled');
-    console.log('🌐 Server URL:', SERVER_URL);
-    console.log('📡 SSE endpoint: /sse');
+    console.log(`🚀 DQoS MCP Remote Server (SDK) running on port ${PORT}`);
+    console.log(`📍 API Base URL: ${API_BASE_URL}`);
+    console.log(`🔐 OAuth enabled`);
+    console.log(`🌐 Server URL: ${SERVER_URL}`);
 });
 
