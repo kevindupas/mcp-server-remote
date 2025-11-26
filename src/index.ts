@@ -237,12 +237,16 @@ app.get('/authorize', (req: any, res) => {
 app.post('/authorize', (req, res) => {
     const { client_id, redirect_uri, state, action } = req.body;
 
+    console.log('Authorization request:', { client_id, redirect_uri, state, action });
+
     if (action !== 'allow') {
+        console.log('Authorization denied by user');
         return res.redirect(`${redirect_uri}?error=access_denied&state=${state || ''}`);
     }
 
     // Générer le code d'autorisation
     const code = generateAuthorizationCode(client_id);
+    console.log('Authorization code generated:', { client_id, code: code.substring(0, 10) + '...' });
 
     // Rediriger vers Claude avec le code
     const redirectUrl = new URL(redirect_uri);
@@ -251,12 +255,31 @@ app.post('/authorize', (req, res) => {
         redirectUrl.searchParams.set('state', state);
     }
 
+    console.log('Redirecting to:', redirectUrl.toString());
     res.redirect(redirectUrl.toString());
 });
 
 // POST /token - Échanger le code contre un access token
 app.post('/token', (req, res) => {
-    const { grant_type, code, client_id, client_secret, redirect_uri } = req.body;
+    // Claude peut envoyer les credentials dans le body OU dans le header Authorization
+    let client_id = req.body.client_id;
+    let client_secret = req.body.client_secret;
+
+    // Si pas dans le body, vérifier le header Authorization (Basic Auth)
+    if (!client_id || !client_secret) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Basic ')) {
+            const base64Credentials = authHeader.substring(6);
+            const credentials = Buffer.from(base64Credentials, 'base64').toString('utf-8');
+            const [id, secret] = credentials.split(':');
+            client_id = id;
+            client_secret = secret;
+        }
+    }
+
+    const { grant_type, code, redirect_uri } = req.body;
+
+    console.log('Token request:', { grant_type, code, client_id, has_secret: !!client_secret });
 
     if (grant_type !== 'authorization_code') {
         return res.status(400).json({
@@ -266,6 +289,7 @@ app.post('/token', (req, res) => {
     }
 
     if (!code || !client_id || !client_secret) {
+        console.error('Missing parameters:', { code: !!code, client_id: !!client_id, client_secret: !!client_secret });
         return res.status(400).json({
             error: 'invalid_request',
             error_description: 'Missing required parameters',
@@ -274,6 +298,7 @@ app.post('/token', (req, res) => {
 
     // Vérifier les credentials du client
     if (!verifyClientCredentials(client_id, client_secret)) {
+        console.error('Invalid credentials:', { client_id, provided_secret: client_secret.substring(0, 10) + '...' });
         return res.status(401).json({
             error: 'invalid_client',
             error_description: 'Invalid client credentials',
@@ -282,6 +307,7 @@ app.post('/token', (req, res) => {
 
     // Vérifier et consommer le code d'autorisation
     if (!verifyAuthorizationCode(code, client_id)) {
+        console.error('Invalid authorization code:', { code, client_id });
         return res.status(400).json({
             error: 'invalid_grant',
             error_description: 'Invalid or expired authorization code',
@@ -290,6 +316,8 @@ app.post('/token', (req, res) => {
 
     // Générer l'access token
     const accessToken = generateAccessToken(client_id);
+
+    console.log('Token generated successfully for:', client_id);
 
     res.json({
         access_token: accessToken,
