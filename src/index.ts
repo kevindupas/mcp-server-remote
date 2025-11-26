@@ -1,29 +1,60 @@
 import express from 'express';
+import session from 'express-session';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
 import axios from 'axios';
+import {
+    generateAuthorizationCode,
+    verifyAuthorizationCode,
+    generateAccessToken,
+    verifyAccessToken,
+    verifyClientCredentials,
+} from './oauth.js';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 const API_BASE_URL = process.env.DQOS_API_URL || 'http://localhost:8000/api/mcp';
-const MCP_SECRET = process.env.MCP_SECRET || 'change-me-in-production';
+const SERVER_URL = process.env.SERVER_URL || `http://localhost:${PORT}`;
+const SESSION_SECRET = process.env.SESSION_SECRET || 'change-me-in-production';
 
 // Middleware
 app.use(helmet());
-app.use(cors());
+app.use(cors({
+    origin: true,
+    credentials: true,
+}));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(session({
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: process.env.NODE_ENV === 'production',
+        httpOnly: true,
+        maxAge: 24 * 60 * 60 * 1000, // 24 heures
+    },
+}));
 
-// Middleware d'authentification simple
-function authMiddleware(req: any, res: any, next: any) {
+// Middleware d'authentification OAuth
+function oauthMiddleware(req: any, res: any, next: any) {
     const authHeader = req.headers.authorization;
 
-    if (!authHeader || authHeader !== `Bearer ${MCP_SECRET}`) {
-        return res.status(401).json({ error: 'Unauthorized' });
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized: Missing or invalid authorization header' });
     }
 
+    const token = authHeader.substring(7); // Remove "Bearer "
+    const verification = verifyAccessToken(token);
+
+    if (!verification.valid) {
+        return res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
+    }
+
+    req.clientId = verification.clientId;
     next();
 }
 
@@ -121,6 +152,147 @@ const tools = [
     },
 ];
 
+// ============================================
+// ROUTES OAUTH 2.0
+// ============================================
+
+// GET /oauth/authorize - Page d'autorisation
+app.get('/oauth/authorize', (req: any, res) => {
+    const { client_id, redirect_uri, response_type, state } = req.query;
+
+    if (!client_id || !redirect_uri || response_type !== 'code') {
+        return res.status(400).json({
+            error: 'invalid_request',
+            error_description: 'Missing or invalid parameters',
+        });
+    }
+
+    // Page d'autorisation simple (en production, utiliser une vraie page HTML)
+    res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Autoriser DQoS MCP</title>
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    max-width: 500px;
+                    margin: 100px auto;
+                    padding: 20px;
+                    text-align: center;
+                }
+                button {
+                    background: #5865F2;
+                    color: white;
+                    border: none;
+                    padding: 12px 24px;
+                    font-size: 16px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    margin: 10px;
+                }
+                button:hover {
+                    background: #4752C4;
+                }
+                .deny {
+                    background: #ED4245;
+                }
+                .deny:hover {
+                    background: #C03537;
+                }
+            </style>
+        </head>
+        <body>
+            <h1>🔐 Autoriser DQoS MCP</h1>
+            <p>Claude souhaite accéder à vos données DQoS.</p>
+            <p><strong>Permissions demandées :</strong></p>
+            <ul style="text-align: left;">
+                <li>Lire les locations</li>
+                <li>Lire les données KPI</li>
+                <li>Lire les scores opérateurs</li>
+                <li>Lire les statistiques de couverture</li>
+            </ul>
+            <form method="POST" action="/oauth/authorize">
+                <input type="hidden" name="client_id" value="${client_id}">
+                <input type="hidden" name="redirect_uri" value="${redirect_uri}">
+                <input type="hidden" name="state" value="${state || ''}">
+                <button type="submit" name="action" value="allow">✅ Autoriser</button>
+                <button type="submit" name="action" value="deny" class="deny">❌ Refuser</button>
+            </form>
+        </body>
+        </html>
+    `);
+});
+
+// POST /oauth/authorize - Traiter l'autorisation
+app.post('/oauth/authorize', (req, res) => {
+    const { client_id, redirect_uri, state, action } = req.body;
+
+    if (action !== 'allow') {
+        return res.redirect(`${redirect_uri}?error=access_denied&state=${state || ''}`);
+    }
+
+    // Générer le code d'autorisation
+    const code = generateAuthorizationCode(client_id);
+
+    // Rediriger vers Claude avec le code
+    const redirectUrl = new URL(redirect_uri);
+    redirectUrl.searchParams.set('code', code);
+    if (state) {
+        redirectUrl.searchParams.set('state', state);
+    }
+
+    res.redirect(redirectUrl.toString());
+});
+
+// POST /oauth/token - Échanger le code contre un access token
+app.post('/oauth/token', (req, res) => {
+    const { grant_type, code, client_id, client_secret, redirect_uri } = req.body;
+
+    if (grant_type !== 'authorization_code') {
+        return res.status(400).json({
+            error: 'unsupported_grant_type',
+            error_description: 'Only authorization_code grant type is supported',
+        });
+    }
+
+    if (!code || !client_id || !client_secret) {
+        return res.status(400).json({
+            error: 'invalid_request',
+            error_description: 'Missing required parameters',
+        });
+    }
+
+    // Vérifier les credentials du client
+    if (!verifyClientCredentials(client_id, client_secret)) {
+        return res.status(401).json({
+            error: 'invalid_client',
+            error_description: 'Invalid client credentials',
+        });
+    }
+
+    // Vérifier et consommer le code d'autorisation
+    if (!verifyAuthorizationCode(code, client_id)) {
+        return res.status(400).json({
+            error: 'invalid_grant',
+            error_description: 'Invalid or expired authorization code',
+        });
+    }
+
+    // Générer l'access token
+    const accessToken = generateAccessToken(client_id);
+
+    res.json({
+        access_token: accessToken,
+        token_type: 'Bearer',
+        expires_in: 86400, // 24 heures
+    });
+});
+
+// ============================================
+// ROUTES MCP
+// ============================================
+
 // GET /mcp - Informations sur le serveur MCP
 app.get('/mcp', (req, res) => {
     res.json({
@@ -130,18 +302,22 @@ app.get('/mcp', (req, res) => {
         capabilities: {
             tools: true,
         },
+        oauth: {
+            authorization_endpoint: `${SERVER_URL}/oauth/authorize`,
+            token_endpoint: `${SERVER_URL}/oauth/token`,
+        },
     });
 });
 
 // GET /mcp/tools - Liste des outils
-app.get('/mcp/tools', authMiddleware, (req, res) => {
+app.get('/mcp/tools', oauthMiddleware, (req, res) => {
     res.json({
         tools,
     });
 });
 
 // POST /mcp/call-tool - Appeler un outil
-app.post('/mcp/call-tool', authMiddleware, async (req, res) => {
+app.post('/mcp/call-tool', oauthMiddleware, async (req, res) => {
     const { name, arguments: args } = req.body;
 
     if (!name) {
@@ -170,7 +346,7 @@ app.post('/mcp/call-tool', authMiddleware, async (req, res) => {
 });
 
 // POST /mcp/sse - Server-Sent Events pour le streaming (optionnel)
-app.post('/mcp/sse', authMiddleware, async (req, res) => {
+app.post('/mcp/sse', oauthMiddleware, async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -212,6 +388,6 @@ function getEndpointForTool(toolName: string): string {
 app.listen(PORT, () => {
     console.log(`🚀 DQoS MCP Remote Server running on port ${PORT}`);
     console.log(`📍 API Base URL: ${API_BASE_URL}`);
-    console.log(`🔐 Auth: Bearer ${MCP_SECRET.substring(0, 10)}...`);
+    console.log(`🔐 OAuth enabled`);
+    console.log(`🌐 Server URL: ${SERVER_URL}`);
 });
-
