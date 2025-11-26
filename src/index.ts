@@ -21,7 +21,16 @@ const SERVER_URL = process.env.SERVER_URL || `http://localhost:${PORT}`;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'change-me-in-production';
 
 // Middleware
-app.use(helmet());
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            formAction: ["'self'", "https://claude.ai"],
+            scriptSrc: ["'self'", "'unsafe-inline'"],
+            styleSrc: ["'self'", "'unsafe-inline'"],
+        },
+    },
+}));
 app.use(cors({
     origin: true,
     credentials: true,
