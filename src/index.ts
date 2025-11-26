@@ -330,7 +330,7 @@ app.post('/token', (req, res) => {
 // ROUTES MCP
 // ============================================
 
-// GET /mcp - Informations sur le serveur MCP
+// GET /mcp - Informations sur le serveur MCP (avec liste des outils)
 app.get('/mcp', (req, res) => {
     res.json({
         name: 'DQoS MCP Remote Server',
@@ -343,6 +343,7 @@ app.get('/mcp', (req, res) => {
             authorization_endpoint: `${SERVER_URL}/authorize`,
             token_endpoint: `${SERVER_URL}/token`,
         },
+        tools, // Ajouter la liste des outils ici pour que Claude les voie
     });
 });
 
