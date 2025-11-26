@@ -85,6 +85,7 @@ const tools = [
     {
         name: 'get_locations',
         description: 'Récupère les locations (provinces, districts, etc.) sans polygones géographiques',
+        readOnlyHint: true, // Lecture seule, pas de modification de données
         inputSchema: {
             type: 'object',
             properties: {
@@ -106,6 +107,7 @@ const tools = [
     {
         name: 'get_kpi_data',
         description: 'Récupère les données KPI de qualité de service',
+        readOnlyHint: true,
         inputSchema: {
             type: 'object',
             properties: {
@@ -118,6 +120,7 @@ const tools = [
     {
         name: 'get_scoring',
         description: 'Récupère les scores des opérateurs',
+        readOnlyHint: true,
         inputSchema: {
             type: 'object',
             properties: {
@@ -129,6 +132,7 @@ const tools = [
     {
         name: 'get_operators',
         description: 'Liste les opérateurs télécoms',
+        readOnlyHint: true,
         inputSchema: {
             type: 'object',
             properties: {
@@ -140,6 +144,7 @@ const tools = [
     {
         name: 'get_coverage',
         description: 'Récupère les statistiques de couverture',
+        readOnlyHint: true,
         inputSchema: {
             type: 'object',
             properties: {
@@ -151,6 +156,7 @@ const tools = [
     {
         name: 'get_analytics',
         description: 'Récupère des analyses globales',
+        readOnlyHint: true,
         inputSchema: {
             type: 'object',
             properties: {
